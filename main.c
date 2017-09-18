@@ -7,22 +7,13 @@ Licensed under GPL v2 or later. See License.txt. */
 #include <string.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <avr/eeprom.h>
 
 #include "usbdrv/usbdrv.h"
 
 // Report format: Y, X, buttons (up to 8)
 static uint8_t report [3]; // current
 static uint8_t report_out [3]; // last sent over USB
-
-static void init_joy( void )
-{
-	// Configure as inputs with pull-ups
-	DDRB  &= ~0x3c;
-	PORTB |=  0x3c;
-	
-	DDRD  &= ~0x03;
-	PORTD |=  0x03;
-}
 
 static void read_joy( void )
 {
@@ -31,16 +22,18 @@ static void read_joy( void )
 	report [2] = 0;
 	
 	// Y
-	if ( ! (PINB & 0x04) ) report [0] = -127;
-	if ( ! (PINB & 0x08) ) report [0] = +127;
+	if ( ! (PINB & 0x01) ) report [0] = -127;
+	if ( ! (PINB & 0x02) ) report [0] = +127;
 	
 	// X
-	if ( ! (PINB & 0x10) ) report [1] = -127;
-	if ( ! (PINB & 0x20) ) report [1] = +127;
+	if ( ! (PINB & 0x04) ) report [1] = -127;
+	if ( ! (PINB & 0x08) ) report [1] = +127;
 	
 	// Buttons
-	if ( ! (PIND & 0x01) ) report [2] |= 0x01;
-	if ( ! (PIND & 0x02) ) report [2] |= 0x02;
+	if ( ! (PINB & 0x10) ) report [2] |= 0x01;
+	if ( ! (PINB & 0x20) ) report [2] |= 0x02;
+	if ( ! (PINB & 0x40) ) report [2] |= 0x04;
+	if ( ! (PINB & 0x80) ) report [2] |= 0x08;
 	// ...
 }
 
@@ -90,18 +83,51 @@ uint8_t usbFunctionSetup( uint8_t data [8] )
 	}
 }
 
-static void toggle_led( void )
+/*static void calibrateOscillator(void)
 {
-	DDRC  |= 1;
-	PORTC ^= 1;
+uchar       step = 128;
+uchar       trialValue = 0, optimumValue;
+int         x, optimumDev, targetValue = (unsigned)(1499 * (double)F_CPU / 10.5e6 + 0.5);
+ 
+    // do a binary search: 
+    do{
+        OSCCAL = trialValue + step;
+        x = usbMeasureFrameLength();    // proportional to current real frequency
+        if(x < targetValue)             // frequency still too low
+            trialValue += step;
+        step >>= 1;
+    }while(step > 0);
+    // We have a precision of +/- 1 for optimum OSCCAL here 
+    // now do a neighborhood search for optimum value
+    optimumValue = trialValue;
+    optimumDev = x; // this is certainly far away from optimum
+    for(OSCCAL = trialValue - 1; OSCCAL <= trialValue + 1; OSCCAL++){
+        x = usbMeasureFrameLength() - targetValue;
+        if(x < 0)
+            x = -x;
+        if(x < optimumDev){
+            optimumDev = x;
+            optimumValue = OSCCAL;
+        }
+    }
+    OSCCAL = optimumValue;
 }
+
+void usbEventResetReady(void)
+{
+    cli();  // usbMeasureFrameLength() counts CPU cycles, so disable interrupts.
+    calibrateOscillator();
+    sei();
+    eeprom_write_byte(0, OSCCAL);   // store the calibrated value in EEPROM
+}*/
 
 int main( void )
 {
 	usbInit();
 	sei();
 	
-	init_joy();
+	DDRB  &= ~0xff;
+	PORTB |=  0xff;
 	
 	for ( ;; )
 	{
@@ -118,7 +144,6 @@ int main( void )
 			{
 				memcpy( report_out, report, sizeof report );
 				usbSetInterrupt( report_out, sizeof report_out );
-				toggle_led();
 			}
 		}
 	}
